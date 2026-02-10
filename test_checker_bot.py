@@ -2,6 +2,8 @@ import telebot
 from telebot import types
 import json
 import os
+from flask import Flask
+from threading import Thread
 
 # Bot tokeningizni shu yerga qo'ying
 BOT_TOKEN = "8429569333:AAG0r_lWgsOMqxIB63DJMFr8tL34JJ9NN2A"
@@ -297,6 +299,27 @@ def handle_text(message):
     bot.send_message(message.chat.id, 
                     "Iltimos, tugmalardan foydalaning yoki /start bosing.")
 
+# Flask app (Render uchun port ochish)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot ishlayapti! ✅"
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+def run_bot():
+    print("Bot ishga tushdi...")
+    bot.infinity_polling()
+
 # Botni ishga tushirish
-print("Bot ishga tushdi...")
-bot.infinity_polling()
+if __name__ == '__main__':
+    # Botni alohida threadda ishga tushirish
+    bot_thread = Thread(target=run_bot)
+    bot_thread.start()
+    
+    # Flask serverni ishga tushirish (Render uchun)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
