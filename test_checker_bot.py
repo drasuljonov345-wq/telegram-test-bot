@@ -311,15 +311,30 @@ def health():
     return "OK", 200
 
 def run_bot():
-    print("Bot ishga tushdi...")
-    bot.infinity_polling()
+    """Bot ishga tushirish funktsiyasi"""
+    import time
+    while True:
+        try:
+            print("Bot ishga tushmoqda...")
+            bot.infinity_polling(timeout=10, long_polling_timeout=5)
+        except Exception as e:
+            print(f"Bot xatolik: {e}")
+            print("5 soniyadan keyin qayta urinish...")
+            time.sleep(5)
 
 # Botni ishga tushirish
 if __name__ == '__main__':
+    # Portni olish
+    port = int(os.environ.get('PORT', 10000))
+    
+    print(f"Flask server porti: {port}")
+    
     # Botni alohida threadda ishga tushirish
-    bot_thread = Thread(target=run_bot)
+    bot_thread = Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
+    print("Bot thread ishga tushdi")
+    
     # Flask serverni ishga tushirish (Render uchun)
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port)
+    # Bu ASOSIY thread - port shu yerda ochiladi
+    app.run(host='0.0.0.0', port=port, debug=False)
