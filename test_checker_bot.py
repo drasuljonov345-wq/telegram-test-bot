@@ -1,486 +1,302 @@
-"""
-Test Tekshiruvchi Bot - Faqat O'qituvchi uchun
-O'qituvchi kalit yuboradi, keyin talabalarning javob varaqlarini yuboradi
-Bot har birini tekshirib natija beradi
-"""
-
 import telebot
 from telebot import types
 import json
 import os
-import re
-from datetime import datetime
-from PIL import Image
-import pytesseract
-import io
 
-# Bot Token
+# Bot tokeningizni shu yerga qo'ying
 BOT_TOKEN = "8429569333:AAG0r_lWgsOMqxIB63DJMFr8tL34JJ9NN2A"
-
-# Admin ID - O'qituvchi
-ADMIN_ID = 2002640746,  # Bu yerga o'z Telegram ID ni qo'ying
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Sessiya ma'lumotlari
-session = {
-    'answer_key': None,
-    'total_questions': 0
+# Ma'lumotlarni saqlash uchun
+DATA_FILE = "bot_data.json"
+
+# Ma'lumotlar strukturasi
+data = {
+    "admin_id": 2002640746,      # Admin ID shu yerga saqlanadi
+    "test_file_id": None,  # Test savollari fayl ID
+    "answers": [],         # To'g'ri javoblar (kalitlar)
+    "test_count": 0,       # Testlar soni
+    "students": {}         # O'quvchilar javoblari
 }
 
-def parse_answers(text):
-    """
-    Javoblarni parse qilish
-    Format: 1A 2B 3C yoki 1)A 2)B 3)C yoki ABCDABC
-    """
-    answers = {}
-    text = text.upper().strip()
-    
-    # Turli formatlarni qo'llab-quvvatlash
-    patterns = [
-        r'(\d+)\s*[).:\-]?\s*([A-E])',  # 1A, 1)A, 1.A, 1:A, 1-A
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        if matches:
-            for match in matches:
-                question_num = int(match[0])
-                answer = match[1]
-                answers[question_num] = answer
-            if answers:
-                return answers
-    
-    # Agar pattern topilmasa, faqat harflar: ABCDABC...
-    letters = re.findall(r'[A-E]', text)
-    if letters:
-        for i, letter in enumerate(letters, 1):
-            answers[i] = letter
-    
-    return answers
+# Ma'lumotlarni yuklash
+def load_data():
+    global data
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
 
-def extract_text_from_image(image_bytes):
-    """Rasmdan matnni ajratib olish (OCR)"""
-    try:
-        image = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(image, lang='eng')
-        return text
-    except Exception as e:
-        print(f"OCR xatosi: {e}")
-        return None
+# Ma'lumotlarni saqlash
+def save_data():
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-def check_answers(student_answers, answer_key):
-    """Javoblarni tekshirish"""
-    correct = 0
-    wrong = 0
-    empty = 0
-    details = []
-    
-    total = len(answer_key)
-    
-    for question_num in sorted(answer_key.keys()):
-        correct_answer = answer_key[question_num]
-        student_answer = student_answers.get(question_num, '-')
-        
-        if student_answer == '-' or student_answer == '':
-            empty += 1
-            details.append(f"➖ {question_num}. Bo'sh (to'g'ri: {correct_answer})")
-        elif student_answer == correct_answer:
-            correct += 1
-            details.append(f"✅ {question_num}. {student_answer}")
-        else:
-            wrong += 1
-            details.append(f"❌ {question_num}. {student_answer} (to'g'ri: {correct_answer})")
-    
-    percentage = (correct / total * 100) if total > 0 else 0
-    
-    # Baho
-    if percentage >= 90:
-        grade = "A'lo (5)"
-    elif percentage >= 70:
-        grade = "Yaxshi (4)"
-    elif percentage >= 50:
-        grade = "Qoniqarli (3)"
-    else:
-        grade = "Qoniqarsiz (2)"
-    
-    return {
-        'correct': correct,
-        'wrong': wrong,
-        'empty': empty,
-        'total': total,
-        'percentage': percentage,
-        'grade': grade,
-        'details': details
-    }
+# Boshlang'ich ma'lumotlarni yuklash
+load_data()
 
-# Start command
-@bot.message_handler(commands=['start', 'help'])
+# /start komandasi
+@bot.message_handler(commands=['start'])
 def start(message):
-    """Bot boshlanganda"""
-    if message.from_user.id != ADMIN_ID:
-        bot.send_message(
-            message.chat.id,
-            "⛔️ Kechirasiz, bu bot faqat o'qituvchi uchun!"
-        )
-        return
+    user_id = message.from_user.id
     
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add("📝 Yangi kalit", "📋 Kalit ko'rish")
-    markup.add("📊 Test tekshirish", "🗑 Kalitni o'chirish")
-    markup.add("ℹ️ Qo'llanma")
-    
-    bot.send_message(
-        message.chat.id,
-        "🎓 Assalomu alaykum, O'qituvchi!\n\n"
-        "🤖 Test Tekshiruvchi Bot\n\n"
-        "📌 Qanday ishlaydi:\n"
-        "1️⃣ Avval test kalitini yuklang\n"
-        "2️⃣ Keyin talabalar javoblarini yuboring\n"
-        "3️⃣ Bot har birini tekshiradi\n\n"
-        "Boshlash uchun tugmalardan foydalaning:",
-        reply_markup=markup
-    )
-
-# Yangi kalit
-@bot.message_handler(func=lambda m: m.text == "📝 Yangi kalit")
-def request_new_key(message):
-    """Yangi kalit so'rash"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    msg = bot.send_message(
-        message.chat.id,
-        "📝 Test kalitini yuboring:\n\n"
-        "📋 Qabul qilinadigan formatlar:\n\n"
-        "1️⃣ Raqam bilan:\n"
-        "   1A 2B 3C 4D 5A...\n"
-        "   1)A 2)B 3)C 4)D...\n"
-        "   1.A 2.B 3.C 4.D...\n\n"
-        "2️⃣ Faqat harflar:\n"
-        "   ABCDABCDABC...\n\n"
-        "📌 Misol (20 savollik test):\n"
-        "1A 2B 3C 4D 5A 6B 7C 8D 9A 10B 11C 12D 13A 14B 15C 16D 17A 18B 19C 20D"
-    )
-    bot.register_next_step_handler(msg, save_answer_key)
-
-def save_answer_key(message):
-    """Kalitni saqlash"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    text = message.text
-    answer_key = parse_answers(text)
-    
-    if not answer_key:
-        bot.send_message(
-            message.chat.id,
-            "❌ Kalit formatida xato!\n\n"
-            "To'g'ri formatda yuboring:\n"
-            "1A 2B 3C 4D...\n\n"
-            "Yoki '📝 Yangi kalit' tugmasini qayta bosing."
-        )
-        return
-    
-    # Sessiyaga saqlash
-    session['answer_key'] = answer_key
-    session['total_questions'] = len(answer_key)
-    
-    # Kalitni ko'rsatish
-    key_preview = []
-    for num in sorted(answer_key.keys())[:10]:
-        key_preview.append(f"{num}.{answer_key[num]}")
-    
-    preview_text = " ".join(key_preview)
-    if len(answer_key) > 10:
-        preview_text += f" ... (va yana {len(answer_key)-10} ta)"
-    
-    bot.send_message(
-        message.chat.id,
-        f"✅ Test kaliti saqlandi!\n\n"
-        f"📊 Jami savollar: {len(answer_key)}\n\n"
-        f"🔑 Kalit:\n{preview_text}\n\n"
-        f"📋 To'liq kalitni ko'rish: '📋 Kalit ko'rish'\n"
-        f"📊 Test tekshirish: '📊 Test tekshirish'"
-    )
-
-# Kalitni ko'rish
-@bot.message_handler(func=lambda m: m.text == "📋 Kalit ko'rish")
-def view_key(message):
-    """Hozirgi kalitni ko'rsatish"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    if not session['answer_key']:
-        bot.send_message(
-            message.chat.id,
-            "❌ Hozircha kalit yuklanmagan!\n\n"
-            "Kalit yuklash uchun '📝 Yangi kalit' tugmasini bosing."
-        )
-        return
-    
-    answer_key = session['answer_key']
-    
-    # Kalitni satrlar bo'yicha ajratish (har satrda 10 ta)
-    lines = []
-    items = sorted(answer_key.items())
-    
-    for i in range(0, len(items), 10):
-        chunk = items[i:i+10]
-        line = " ".join([f"{num}.{ans}" for num, ans in chunk])
-        lines.append(line)
-    
-    key_text = "\n".join(lines)
-    
-    bot.send_message(
-        message.chat.id,
-        f"📋 Hozirgi test kaliti:\n\n"
-        f"📊 Jami savollar: {session['total_questions']}\n\n"
-        f"🔑 Kalit:\n{key_text}"
-    )
-
-# Kalitni o'chirish
-@bot.message_handler(func=lambda m: m.text == "🗑 Kalitni o'chirish")
-def delete_key(message):
-    """Kalitni o'chirish"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    if not session['answer_key']:
-        bot.send_message(
-            message.chat.id,
-            "❌ O'chiriladigan kalit yo'q!"
-        )
-        return
-    
-    markup = types.InlineKeyboardMarkup()
-    markup.row(
-        types.InlineKeyboardButton("✅ Ha", callback_data="delete_yes"),
-        types.InlineKeyboardButton("❌ Yo'q", callback_data="delete_no")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        f"⚠️ Kalitni o'chirmoqchimisiz?\n\n"
-        f"Kalit: {session['total_questions']} savol",
-        reply_markup=markup
-    )
-
-@bot.callback_query_handler(func=lambda call: call.data in ["delete_yes", "delete_no"])
-def delete_confirmation(call):
-    """O'chirish tasdig'i"""
-    if call.from_user.id != ADMIN_ID:
-        return
-    
-    if call.data == "delete_yes":
-        session['answer_key'] = None
-        session['total_questions'] = 0
-        bot.edit_message_text(
-            "✅ Kalit o'chirildi!\n\n"
-            "Yangi kalit yuklash uchun '📝 Yangi kalit' tugmasini bosing.",
-            call.message.chat.id,
-            call.message.message_id
-        )
-    else:
-        bot.edit_message_text(
-            "❌ Bekor qilindi",
-            call.message.chat.id,
-            call.message.message_id
-        )
-
-# Test tekshirish
-@bot.message_handler(func=lambda m: m.text == "📊 Test tekshirish")
-def request_test(message):
-    """Test javobini so'rash"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    if not session['answer_key']:
-        bot.send_message(
-            message.chat.id,
-            "❌ Avval kalit yuklang!\n\n"
-            "'📝 Yangi kalit' tugmasini bosing."
-        )
-        return
-    
-    msg = bot.send_message(
-        message.chat.id,
-        f"📝 Talaba javobini yuboring:\n\n"
-        f"📊 Test: {session['total_questions']} savol\n\n"
-        f"📋 Qabul qilinadigan formatlar:\n\n"
-        f"1️⃣ Matn:\n"
-        f"   1A 2B 3C 4D...\n"
-        f"   ABCDABCD...\n\n"
-        f"2️⃣ Rasm:\n"
-        f"   Javob varag'ini suratga oling\n\n"
-        f"3️⃣ Fayl:\n"
-        f"   .txt fayl yuboring\n\n"
-        f"💡 Bitta talaba javobini yuborganingizdan keyin,\n"
-        f"qaytadan '📊 Test tekshirish' bosib keyingisini yuboring."
-    )
-    bot.register_next_step_handler(msg, check_student_test)
-
-def check_student_test(message):
-    """Talaba testini tekshirish"""
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    if not session['answer_key']:
-        bot.send_message(message.chat.id, "❌ Kalit topilmadi!")
-        return
-    
-    student_answers = None
-    student_name = "Talaba"
-    
-    # Matn
-    if message.text:
-        student_answers = parse_answers(message.text)
-    
-    # Rasm
-    elif message.photo:
-        bot.send_message(message.chat.id, "🔄 Rasmdan matn o'qilmoqda...")
-        
-        try:
-            file_info = bot.get_file(message.photo[-1].file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            
-            # OCR
-            text = extract_text_from_image(downloaded_file)
-            
-            if text:
-                student_answers = parse_answers(text)
-            else:
-                bot.send_message(
-                    message.chat.id,
-                    "❌ Rasmdan matn o'qib bo'lmadi!\n\n"
-                    "Iltimos:\n"
-                    "• Aniq rasm yuboring\n"
-                    "• Yoki javoblarni matn ko'rinishida yuboring"
-                )
-                return
-        except Exception as e:
-            bot.send_message(
-                message.chat.id,
-                f"❌ Xatolik yuz berdi: {str(e)}\n\n"
-                "Javoblarni matn ko'rinishida yuboring."
-            )
-            return
-    
-    # Fayl
-    elif message.document:
-        if message.document.mime_type == 'text/plain':
-            file_info = bot.get_file(message.document.file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            text = downloaded_file.decode('utf-8')
-            student_answers = parse_answers(text)
-        else:
-            bot.send_message(
-                message.chat.id,
-                "❌ Faqat .txt fayl qabul qilinadi!"
-            )
-            return
-    
-    # Rasm caption dan nom olish
-    if message.caption:
-        student_name = message.caption
-    
-    if not student_answers:
-        bot.send_message(
-            message.chat.id,
-            "❌ Javoblar tanilmadi!\n\n"
-            "To'g'ri formatda yuboring:\n"
-            "1A 2B 3C 4D...\n\n"
-            "Yoki qaytadan '📊 Test tekshirish' bosing."
-        )
-        return
-    
-    # Tekshirish
-    result = check_answers(student_answers, session['answer_key'])
-    
-    # Tafsilotlarni formatlash
-    details_lines = []
-    for i in range(0, len(result['details']), 5):
-        chunk = result['details'][i:i+5]
-        details_lines.append("\n".join(chunk))
-    
-    details_text = "\n\n".join(details_lines[:4])  # Birinchi 20 ta savol
-    
-    if len(result['details']) > 20:
-        details_text += f"\n\n... va yana {len(result['details']) - 20} ta savol"
-    
-    # Natijani yuborish
-    result_message = (
-        f"{'='*30}\n"
-        f"📊 NATIJA\n"
-        f"{'='*30}\n\n"
-        f"👤 Talaba: {student_name}\n\n"
-        f"✅ To'g'ri: {result['correct']}\n"
-        f"❌ Noto'g'ri: {result['wrong']}\n"
-        f"➖ Bo'sh: {result['empty']}\n"
-        f"📊 Jami: {result['total']}\n\n"
-        f"📈 Foiz: {result['percentage']:.1f}%\n"
-        f"🎓 Baho: {result['grade']}\n\n"
-        f"{'='*30}\n"
-        f"TAFSILOTLAR:\n"
-        f"{'='*30}\n\n"
-        f"{details_text}"
-    )
-    
-    bot.send_message(message.chat.id, result_message)
-    
-    # Keyingi test uchun taklif
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("📊 Test tekshirish", "📋 Kalit ko'rish")
     
-    bot.send_message(
-        message.chat.id,
-        "✅ Tekshiruv tugadi!\n\n"
-        "Keyingi talaba javobini tekshirish uchun\n"
-        "'📊 Test tekshirish' tugmasini bosing.",
-        reply_markup=markup
-    )
+    if data["admin_id"] is None:
+        # Birinchi foydalanuvchi admin bo'ladi
+        data["admin_id"] = user_id
+        save_data()
+        markup.add("📝 Test savollarini yuklash", "🔑 Kalitlarni yuklash")
+        markup.add("📊 Natijalarni ko'rish", "🗑 Ma'lumotlarni tozalash")
+        bot.send_message(message.chat.id, 
+                        f"Assalomu alaykum! Siz admin sifatida ro'yxatdan o'tdingiz.\n\n"
+                        f"Sizning ID: {user_id}", 
+                        reply_markup=markup)
+    elif user_id == data["admin_id"]:
+        markup.add("📝 Test savollarini yuklash", "🔑 Kalitlarni yuklash")
+        markup.add("📊 Natijalarni ko'rish", "🗑 Ma'lumotlarni tozalash")
+        bot.send_message(message.chat.id, 
+                        "Xush kelibsiz, Admin!", 
+                        reply_markup=markup)
+    else:
+        markup.add("📥 Testni olish", "📤 Javoblarni yuborish")
+        bot.send_message(message.chat.id, 
+                        f"Assalomu alaykum! Test ishlash uchun quyidagi tartibda harakat qiling:\n\n"
+                        f"1️⃣ Avval '📥 Testni olish' tugmasini bosing\n"
+                        f"2️⃣ Test savollarini ko'ring va ishlang\n"
+                        f"3️⃣ Keyin '📤 Javoblarni yuborish' tugmasini bosing\n\n"
+                        f"Javoblaringizni quyidagi formatda yuboring:\n"
+                        f"Ism Familiya\n"
+                        f"ABCDABCD...", 
+                        reply_markup=markup)
 
-# Qo'llanma
-@bot.message_handler(func=lambda m: m.text == "ℹ️ Qo'llanma")
-def show_guide(message):
-    """Qo'llanmani ko'rsatish"""
-    if message.from_user.id != ADMIN_ID:
+# Admin test savollarini yuklash
+@bot.message_handler(func=lambda message: message.text == "📝 Test savollarini yuklash" and message.from_user.id == data.get("admin_id"))
+def upload_test(message):
+    bot.send_message(message.chat.id, 
+                    "Test savollarini PDF, rasm (JPG/PNG) yoki dokument shaklida yuboring.\n\n"
+                    "Bir nechta rasm bo'lsa, hammasini bitta xabarda yuboring.")
+    bot.register_next_step_handler(message, process_test_file)
+
+def process_test_file(message):
+    # Rasmlar
+    if message.photo:
+        file_id = message.photo[-1].file_id  # Eng katta o'lchamdagi rasmni olish
+        data["test_file_id"] = file_id
+        save_data()
+        bot.send_message(message.chat.id, 
+                        f"✅ Test savollari (rasm) saqlandi!\n\n"
+                        f"Endi kalitlarni yuklang: 🔑 Kalitlarni yuklash")
+    # PDF yoki dokument
+    elif message.document:
+        file_id = message.document.file_id
+        data["test_file_id"] = file_id
+        save_data()
+        bot.send_message(message.chat.id, 
+                        f"✅ Test savollari (fayl) saqlandi!\n\n"
+                        f"Endi kalitlarni yuklang: 🔑 Kalitlarni yuklash")
+    else:
+        bot.send_message(message.chat.id, 
+                        "❌ Iltimos, rasm yoki PDF fayl yuboring!")
+
+# Admin kalitlarni yuklash
+@bot.message_handler(func=lambda message: message.text == "🔑 Kalitlarni yuklash" and message.from_user.id == data.get("admin_id"))
+def upload_keys(message):
+    if not data.get("test_file_id"):
+        bot.send_message(message.chat.id, 
+                        "⚠️ Avval test savollarini yuklang!\n"
+                        "📝 Test savollarini yuklash tugmasini bosing.")
         return
     
-    guide_text = (
-        "📖 QO'LLANMA\n\n"
-        "1️⃣ KALIT YUKLASH:\n"
-        "   • '📝 Yangi kalit' tugmasini bosing\n"
-        "   • Kalitni yuboring (1A 2B 3C...)\n\n"
-        "2️⃣ TEST TEKSHIRISH:\n"
-        "   • '📊 Test tekshirish' tugmasini bosing\n"
-        "   • Talaba javobini yuboring\n"
-        "   • Rasm yuborsangiz, caption da\n"
-        "     talaba nomini yozing\n\n"
-        "3️⃣ KALIT FORMATLAR:\n"
-        "   ✅ 1A 2B 3C 4D...\n"
-        "   ✅ 1)A 2)B 3)C...\n"
-        "   ✅ ABCDABCD...\n\n"
-        "4️⃣ JAVOB FORMATLAR:\n"
-        "   📝 Matn: 1A 2B 3C...\n"
-        "   📷 Rasm: javob varag'i\n"
-        "   📄 Fayl: .txt fayl\n\n"
-        "5️⃣ MASLAHATLAR:\n"
-        "   💡 Rasm aniq bo'lishi kerak\n"
-        "   💡 Rasm caption da nom yozing\n"
-        "   💡 Bir vaqtda bitta test tekshiring\n\n"
-        "❓ Yordam kerakmi? /start bosing"
-    )
+    bot.send_message(message.chat.id, 
+                    "To'g'ri javoblarni (kalitlarni) yuboring.\n\n"
+                    "Format: ABCDABCDABCD...\n"
+                    "Misol: ABCDABCDA (10 ta test uchun)")
+    bot.register_next_step_handler(message, process_keys)
+
+def process_keys(message):
+    answers = message.text.strip().upper()
     
-    bot.send_message(message.chat.id, guide_text)
+    # Faqat A, B, C, D harflari borligini tekshirish
+    if not all(c in 'ABCD' for c in answers):
+        bot.send_message(message.chat.id, 
+                        "❌ Xato! Faqat A, B, C, D harflarini kiriting.")
+        return
+    
+    data["answers"] = list(answers)
+    data["test_count"] = len(answers)
+    data["students"] = {}  # Yangi kalitlar kelganda o'quvchilarni tozalash
+    save_data()
+    
+    bot.send_message(message.chat.id, 
+                    f"✅ Kalitlar saqlandi!\n"
+                    f"Testlar soni: {data['test_count']}\n"
+                    f"Kalitlar: {answers}")
+
+# O'quvchi test savollarini olish
+@bot.message_handler(func=lambda message: message.text == "📥 Testni olish")
+def get_test(message):
+    if not data.get("test_file_id"):
+        bot.send_message(message.chat.id, 
+                        "❌ Hozircha test yuklanmagan. Admin bilan bog'laning.")
+        return
+    
+    if not data.get("answers"):
+        bot.send_message(message.chat.id, 
+                        "❌ Test kalitlari hali yuklanmagan. Admin bilan bog'laning.")
+        return
+    
+    # Test savollarini yuborish
+    try:
+        bot.send_message(message.chat.id, 
+                        f"📝 Test savollari:\n"
+                        f"Jami testlar soni: {data['test_count']}\n\n"
+                        f"Testni ishlang va '📤 Javoblarni yuborish' tugmasini bosing!")
+        
+        # Fayl yuborish
+        bot.send_document(message.chat.id, data["test_file_id"])
+    except:
+        # Agar dokument bo'lmasa, rasm deb yuborish
+        try:
+            bot.send_photo(message.chat.id, data["test_file_id"])
+        except:
+            bot.send_message(message.chat.id, 
+                            "❌ Xatolik yuz berdi. Admin bilan bog'laning.")
+
+# O'quvchi javoblarini yuborish
+@bot.message_handler(func=lambda message: message.text == "📤 Javoblarni yuborish")
+def submit_answers(message):
+    if data["test_count"] == 0:
+        bot.send_message(message.chat.id, 
+                        "❌ Hozircha test kalitlari yuklanmagan. Admin bilan bog'laning.")
+        return
+    
+    bot.send_message(message.chat.id, 
+                    f"Ismingiz va javoblaringizni yuboring.\n\n"
+                    f"Format:\n"
+                    f"Ism Familiya\n"
+                    f"ABCDABCD...\n\n"
+                    f"Testlar soni: {data['test_count']}")
+    bot.register_next_step_handler(message, process_student_answers)
+
+def process_student_answers(message):
+    try:
+        lines = message.text.strip().split('\n')
+        if len(lines) < 2:
+            bot.send_message(message.chat.id, 
+                            "❌ Xato format! Birinchi qatorda ismingiz, ikkinchi qatorda javoblaringiz bo'lishi kerak.")
+            return
+        
+        student_name = lines[0].strip()
+        student_answers = lines[1].strip().upper()
+        
+        # Faqat A, B, C, D harflari borligini tekshirish
+        if not all(c in 'ABCD' for c in student_answers):
+            bot.send_message(message.chat.id, 
+                            "❌ Xato! Javoblarda faqat A, B, C, D harflarini kiriting.")
+            return
+        
+        if len(student_answers) != data["test_count"]:
+            bot.send_message(message.chat.id, 
+                            f"❌ Xato! Siz {len(student_answers)} ta javob yubordingiz, "
+                            f"lekin {data['test_count']} ta javob kerak.")
+            return
+        
+        # Javoblarni tekshirish
+        correct = 0
+        for i in range(len(student_answers)):
+            if student_answers[i] == data["answers"][i]:
+                correct += 1
+        
+        # O'quvchi ma'lumotlarini saqlash
+        data["students"][student_name] = {
+            "answers": list(student_answers),
+            "correct": correct,
+            "total": data["test_count"]
+        }
+        save_data()
+        
+        bot.send_message(message.chat.id, 
+                        f"✅ Javoblaringiz qabul qilindi!\n\n"
+                        f"👤 {student_name}\n"
+                        f"✔️ To'g'ri javoblar: {correct}/{data['test_count']}\n"
+                        f"📊 Natija: {(correct/data['test_count']*100):.1f}%")
+        
+        # Adminni xabardor qilish
+        if data["admin_id"]:
+            bot.send_message(data["admin_id"], 
+                            f"🆕 Yangi javob qabul qilindi!\n\n"
+                            f"👤 {student_name}\n"
+                            f"✔️ {correct}/{data['test_count']}")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, 
+                        f"❌ Xatolik yuz berdi: {str(e)}")
+
+# Natijalarni ko'rish (Admin uchun)
+@bot.message_handler(func=lambda message: message.text == "📊 Natijalarni ko'rish" and message.from_user.id == data.get("admin_id"))
+def view_results(message):
+    if not data["students"]:
+        bot.send_message(message.chat.id, 
+                        "Hozircha hech kim javob yubormagan.")
+        return
+    
+    result_text = f"📊 TEST NATIJALARI\n"
+    result_text += f"Jami testlar soni: {data['test_count']}\n"
+    result_text += f"Ishtirokchilar: {len(data['students'])}\n"
+    result_text += "=" * 40 + "\n\n"
+    
+    # O'quvchilarni natijalar bo'yicha saralash
+    sorted_students = sorted(data["students"].items(), 
+                           key=lambda x: x[1]["correct"], 
+                           reverse=True)
+    
+    for i, (name, info) in enumerate(sorted_students, 1):
+        percentage = (info["correct"] / info["total"] * 100)
+        result_text += f"{i}. {name}\n"
+        result_text += f"   ✔️ {info['correct']}/{info['total']} ({percentage:.1f}%)\n\n"
+    
+    # Agar matn juda uzun bo'lsa, faylga yozish
+    if len(result_text) > 4000:
+        with open("natijalar.txt", "w", encoding="utf-8") as f:
+            f.write(result_text)
+        with open("natijalar.txt", "rb") as f:
+            bot.send_document(message.chat.id, f, caption="📊 Test natijalari")
+        os.remove("natijalar.txt")
+    else:
+        bot.send_message(message.chat.id, result_text)
+
+# Ma'lumotlarni tozalash (Admin uchun)
+@bot.message_handler(func=lambda message: message.text == "🗑 Ma'lumotlarni tozalash" and message.from_user.id == data.get("admin_id"))
+def clear_data(message):
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("✅ Ha, tozalash", callback_data="clear_yes"))
+    markup.add(types.InlineKeyboardButton("❌ Yo'q, bekor qilish", callback_data="clear_no"))
+    
+    bot.send_message(message.chat.id, 
+                    "⚠️ Barcha o'quvchilar javoblarini o'chirmoqchimisiz?\n"
+                    "Kalitlar saqlanib qoladi.",
+                    reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data in ["clear_yes", "clear_no"])
+def callback_clear(call):
+    if call.data == "clear_yes":
+        data["students"] = {}
+        save_data()
+        bot.edit_message_text("✅ O'quvchilar javoblari o'chirildi!", 
+                            call.message.chat.id, 
+                            call.message.message_id)
+    else:
+        bot.edit_message_text("❌ Bekor qilindi.", 
+                            call.message.chat.id, 
+                            call.message.message_id)
+
+# Oddiy xabarlarni qabul qilish
+@bot.message_handler(func=lambda message: True)
+def handle_text(message):
+    bot.send_message(message.chat.id, 
+                    "Iltimos, tugmalardan foydalaning yoki /start bosing.")
 
 # Botni ishga tushirish
-if __name__ == '__main__':
-    print("="*50)
-    print("🤖 Test Tekshiruvchi Bot ishga tushdi!")
-    print("="*50)
-    print(f"📋 Admin ID: {ADMIN_ID}")
-    print("⌨️  Botni to'xtatish: Ctrl+C")
-    print("="*50)
-    bot.infinity_polling()
-
+print("Bot ishga tushdi...")
+bot.infinity_polling()
