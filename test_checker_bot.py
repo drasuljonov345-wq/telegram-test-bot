@@ -18,7 +18,7 @@ import io
 BOT_TOKEN = "8429569333:AAG0r_lWgsOMqxIB63DJMFr8tL34JJ9NN2A"
 
 # Admin ID - O'qituvchi
-ADMIN_ID = 7244207532, 2002640746,  # Bu yerga o'z Telegram ID ni qo'ying
+ADMIN_ID = 2002640746,  # Bu yerga o'z Telegram ID ni qo'ying
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -483,3 +483,4 @@ if __name__ == '__main__':
     print("⌨️  Botni to'xtatish: Ctrl+C")
     print("="*50)
     bot.infinity_polling()
+
