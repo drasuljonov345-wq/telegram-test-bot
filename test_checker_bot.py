@@ -15,7 +15,7 @@ DATA_FILE = "bot_data.json"
 
 # Ma'lumotlar strukturasi
 data = {
-    "admin_id": 2002640746, 7244207532,      # Admin ID shu yerga saqlanadi
+    "admin_id": 2002640746,      # Admin ID shu yerga saqlanadi
     "test_file_id": None,  # Test savollari fayl ID
     "answers": [],         # To'g'ri javoblar (kalitlar)
     "test_count": 0,       # Testlar soni
@@ -338,4 +338,5 @@ if __name__ == '__main__':
     # Flask serverni ishga tushirish (Render uchun)
     # Bu ASOSIY thread - port shu yerda ochiladi
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
